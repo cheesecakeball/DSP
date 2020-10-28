@@ -77,6 +77,11 @@ public:
 
 	const CoinPackedVector * getObjScenario(int scenario) {return obj_scen_[scenario];}
 
+	/** get quadratic objective function coefficients for a given stage */
+	const CoinPackedMatrix * getQuadraticObjCore(int stage) {return qobj_core_[stage];}
+
+	const CoinPackedMatrix * getQuadraticObjScenario(int scenario) {return qobj_scen_[scenario];}
+
 	/** get column type for a given stage */
 	const char * getCtypeCore(int stage) {return ctype_core_[stage];}
 
@@ -109,6 +114,16 @@ public:
 	/** copy core objective coefficients */
 	void copyCoreObjective(double * obj, int stg);
 
+	/** copy core quadratic objective coefficients 
+	 *  for coupling terms, do not shift indices, start from x,
+	 *  for non-coupling terms, shift indices, start from y,
+	 *  only for two-stage problem
+	*/
+	void copyCoreQuadrativeObjective(
+		CoinPackedMatrix *&qobj_coupling, 
+		CoinPackedMatrix *&qobj_ncoupling, 
+		int stg);
+
 	/** copy core column types */
 	void copyCoreColType(char * ctype, int stg);
 
@@ -140,6 +155,9 @@ public:
 	/** combine random objective coefficients */
 	void combineRandObjective(double * obj, int stg, int scen, bool adjustProbability = true);
 
+	/** combine random quadratic objective coefficients */
+	void combineRandQuadraticObjective(CoinPackedMatrix * &qobj_coupling, CoinPackedMatrix * &qobj_ncoupling, int stg, int scen, bool adjustProbability = true);
+
 	/** combine random row lower bounds */
 	void combineRandRowLower(double * rlbd, int stg, int scen);
 
@@ -159,11 +177,16 @@ public:
 			int offset,   /**< offset by which indices are shifted */
 			int start = 0 /**< index only after which indices are shifted */);
 
-	bool isDro() {return isdro_;}
-	int getNumReferences() {return nrefs_;}
-	double getWassersteinSize() {return wass_eps_;}
-	double getWassersteinDist(int i, int j);
-	double getReferenceProbability(int i);
+	virtual bool isQCQP() {return isQCQP_;}
+
+	// The following functions are for distributionally robust variant.
+	// TODO: Better to create a new inhereted class?
+	virtual void setDro(bool yes) { isdro_ = yes; }
+	virtual bool isDro() {return isdro_;}
+	virtual int getNumReferences() {return nrefs_;}
+	virtual double getWassersteinSize() {return wass_eps_;}
+	virtual double getWassersteinDist(int i, int j);
+	virtual double getReferenceProbability(int i);
 
 protected:
 
@@ -188,18 +211,21 @@ protected:
 	double ** clbd_core_;           /**< column lower bounds for each stage */
 	double ** cubd_core_;           /**< column upper bounds for each stage */
 	double ** obj_core_;            /**< objective coefficients for each stage */
+	CoinPackedMatrix ** qobj_core_; /**< quadratic objecitve coefficients for each stage */
 	double ** rlbd_core_;           /**< row lower bounds for each stage */
 	double ** rubd_core_;           /**< row upper bounds for each stage */
 	char **   ctype_core_;          /**< column types for each stage */
 
 	/*
 	 * Random data only (no core data)
+	 * TODO: This must assume two-stage programs.
 	 */
 	double * prob_;                 /**< array of scenario probability */
 	CoinPackedMatrix ** mat_scen_;  /**< scenario matrix */
 	CoinPackedVector ** clbd_scen_; /**< column lower bounds for each scenario */
 	CoinPackedVector ** cubd_scen_; /**< column upper bounds for each scenario */
 	CoinPackedVector ** obj_scen_;  /**< objective coefficients for each scenario */
+	CoinPackedMatrix ** qobj_scen_; /**< quadratic objective coefficients for each scenario */
 	CoinPackedVector ** rlbd_scen_; /**< row lower bounds for each scenario */
 	CoinPackedVector ** rubd_scen_; /**< row upper bounds for each scenario */
 
@@ -210,6 +236,7 @@ protected:
 	bool fromSMPS_; /**< problem was read from SMPS files? */
 
 	bool isdro_;                /**< is this distributionally robust? */
+	bool isQCQP_ = 0;			/**< quadratic terms in the problem? */
 	int nrefs_;                 /**< number of reference scenarios for DRO */
 	double wass_eps_;           /**< size of the Wasserstein ball */
 	double ** wass_dist_;       /**< Wasserstein distances between two realizations */

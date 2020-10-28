@@ -5,7 +5,7 @@
  *      Author: kibaekkim
  */
 
-//#define DSP_DEBUG
+// #define DSP_DEBUG
 
 #include <cstdlib>
 #include <cstdio>
@@ -138,20 +138,59 @@ int readDro(DspApiEnv * env, const char * dro)
 void loadFirstStage(
 		DspApiEnv *          env,   /**< pointer to API object */
 		const CoinBigIndex * start, /**< start index for each row */
+ 		const int *          index, /**< column indices */
+ 		const double *       value, /**< constraint elements */
+ 		const double *       clbd,  /**< column lower bounds */
+ 		const double *       cubd,  /**< column upper bounds */
+ 		const char *         ctype, /**< column types */
+ 		const double *       obj,   /**< objective coefficients */
+ 		const double *       rlbd,  /**< row lower bounds */
+ 		const double *       rubd   /**< row upper bounds */)
+{
+ 	getTssModel(env)->loadFirstStage(start, index, value, clbd, cubd, ctype, obj, rlbd, rubd);
+}
+
+/** load first-stage problem with quadratic objective */
+void loadQuadraticFirstStage(
+		DspApiEnv *          env,   /**< pointer to API object */
+		const CoinBigIndex * start, /**< start index for each row */
 		const int *          index, /**< column indices */
 		const double *       value, /**< constraint elements */
 		const double *       clbd,  /**< column lower bounds */
 		const double *       cubd,  /**< column upper bounds */
 		const char *         ctype, /**< column types */
 		const double *       obj,   /**< objective coefficients */
+		const int * 		 qrowindex,/**< start index for first-stage quadratic objective */
+		const int *			 qcolindex,/**< quadratic objective column indices */
+		const double *		 qvalue,/**< quadratic objective elements */
+		const CoinBigIndex	 qnum,	/**< number of quadratic elements */
 		const double *       rlbd,  /**< row lower bounds */
 		const double *       rubd   /**< row upper bounds */)
 {
-	getTssModel(env)->loadFirstStage(start, index, value, clbd, cubd, ctype, obj, rlbd, rubd);
+	getTssModel(env)->loadFirstStage(start, index, value, clbd, cubd, ctype, obj, qrowindex, qcolindex, qvalue, qnum, rlbd, rubd);
 }
+
 
 /** load second-stage problem */
 void loadSecondStage(
+ 		DspApiEnv *          env,   /**< pointer to API object */
+ 		const int            s,     /**< scenario index */
+ 		const double         prob,  /**< probability */
+ 		const CoinBigIndex * start, /**< start index for each row */
+ 		const int *          index, /**< column indices */
+ 		const double *       value, /**< constraint elements */
+ 		const double *       clbd,  /**< column lower bounds */
+ 		const double *       cubd,  /**< column upper bounds */
+ 		const char *         ctype, /**< column types */
+ 		const double *       obj,   /**< objective coefficients */
+ 		const double *       rlbd,  /**< row lower bounds */
+ 		const double *       rubd   /**< row upper bounds */)
+{
+ 	getTssModel(env)->loadSecondStage(s, prob, start, index, value, clbd, cubd, ctype, obj, rlbd, rubd);
+}
+
+/** load second-stage problem */
+void loadQuadraticSecondStage(
 		DspApiEnv *          env,   /**< pointer to API object */
 		const int            s,     /**< scenario index */
 		const double         prob,  /**< probability */
@@ -162,10 +201,14 @@ void loadSecondStage(
 		const double *       cubd,  /**< column upper bounds */
 		const char *         ctype, /**< column types */
 		const double *       obj,   /**< objective coefficients */
+		const int * 		 qrowindex,/**< start index for first-stage quadratic objective */
+		const int *			 qcolindex,/**< quadratic objective column indices */
+		const double *		 qvalue,/**< quadratic objective elements */
+		const CoinBigIndex	 qnum,	/**< number of quadratic elements */
 		const double *       rlbd,  /**< row lower bounds */
 		const double *       rubd   /**< row upper bounds */)
 {
-	getTssModel(env)->loadSecondStage(s, prob, start, index, value, clbd, cubd, ctype, obj, rlbd, rubd);
+	getTssModel(env)->loadSecondStage(s, prob, start, index, value, clbd, cubd, ctype, obj, qrowindex, qcolindex, qvalue, qnum, rlbd, rubd);
 }
 
 /**
@@ -274,22 +317,7 @@ void solveDd(DspApiEnv * env)
 	freeSolver(env);
 
 	env->solver_ = new DdDriverSerial(env->model_, env->par_, env->message_);
-	DSP_RTN_CHECK_THROW(env->solver_->init());
-	DSP_RTN_CHECK_THROW(dynamic_cast<DdDriverSerial*>(env->solver_)->run());
-	DSP_RTN_CHECK_THROW(env->solver_->finalize());
-
-	END_TRY_CATCH(;)
-}
-
-/** solve dual decomposition for DRO */
-void solveDro(DspApiEnv * env)
-{
-	BGN_TRY_CATCH
-
-	DSP_API_CHECK_MODEL();
-	freeSolver(env);
-
-	env->solver_ = new DdDriverSerial(env->model_, env->par_, env->message_);
+	
 	DSP_RTN_CHECK_THROW(env->solver_->init());
 	DSP_RTN_CHECK_THROW(dynamic_cast<DdDriverSerial*>(env->solver_)->run());
 	DSP_RTN_CHECK_THROW(env->solver_->finalize());
@@ -316,6 +344,7 @@ void solveDw(DspApiEnv * env)
 /** solve serial Benders decomposition */
 void solveBd(DspApiEnv * env)
 {
+	BGN_TRY_CATCH
 #ifdef DSP_HAS_SCIP
 	DSP_API_CHECK_MODEL();
 	freeSolver(env);
@@ -326,7 +355,8 @@ void solveBd(DspApiEnv * env)
 		return;
 	}
 
-	BdDriverSerial * bd = new BdDriverSerial(new DecTssModel(*getTssModel(env)), env->par_, env->message_);
+	DecTssModel* dec = new DecTssModel(*getTssModel(env));
+	BdDriverSerial * bd = new BdDriverSerial(dec, env->par_, env->message_);
 	env->solver_ = bd;
 	DSPdebugMessage("Created a serial Benders object\n");
 
@@ -352,21 +382,21 @@ void solveBd(DspApiEnv * env)
 	}
 	DSPdebugMessage("Set auxiliary variable data\n");
 
-	/** relax second-stage integrality */
-	env->par_->setBoolPtrParam("RELAX_INTEGRALITY", 1, true);
-
 	DSP_RTN_CHECK_THROW(env->solver_->init());
 	DSP_RTN_CHECK_THROW(dynamic_cast<BdDriverSerial*>(env->solver_)->run());
 	DSP_RTN_CHECK_THROW(env->solver_->finalize());
 #else
 	printf("Benders decomposition has been disabled because SCIP was not available.\n");
 #endif
+	END_TRY_CATCH(;)
 }
 
 #ifdef DSP_HAS_MPI
 /** solve parallel dual decomposition */
 void solveDdMpi(DspApiEnv * env, MPI_Comm comm)
 {
+	BGN_TRY_CATCH
+
 	int comm_size;
 	MPI_Comm_size(comm, &comm_size);
 
@@ -382,11 +412,15 @@ void solveDdMpi(DspApiEnv * env, MPI_Comm comm)
 	DSP_RTN_CHECK_THROW(env->solver_->init());
 	DSP_RTN_CHECK_THROW(dynamic_cast<DdDriverMpi*>(env->solver_)->run());
 	DSP_RTN_CHECK_THROW(env->solver_->finalize());
+
+	END_TRY_CATCH(;)
 }
 
 /** solve parallel Dantzig-Wolfe decomposition with branch-and-bound */
 void solveDwMpi(DspApiEnv * env, MPI_Comm comm)
 {
+	BGN_TRY_CATCH
+
 	int comm_size;
 	MPI_Comm_size(comm, &comm_size);
 
@@ -402,12 +436,16 @@ void solveDwMpi(DspApiEnv * env, MPI_Comm comm)
 	DSP_RTN_CHECK_THROW(env->solver_->init());
 	DSP_RTN_CHECK_THROW(dynamic_cast<DwSolverMpi*>(env->solver_)->run());
 	DSP_RTN_CHECK_THROW(env->solver_->finalize());
+
+	END_TRY_CATCH(;)
 }
 
 /** solve parallel Benders decomposition */
 void solveBdMpi(
 		DspApiEnv * env, MPI_Comm comm)
 {
+	BGN_TRY_CATCH
+	
 	int comm_size;
 	MPI_Comm_size(comm, &comm_size);
 
@@ -427,7 +465,8 @@ void solveBdMpi(
 	}
 
 	//DSPdebugMessage("Creating a MPI Benders object (comm %d)\n", comm);
-	BdDriverMpi * bd = new BdDriverMpi(new DecTssModel(*getTssModel(env)), env->par_, env->message_, comm);
+	//BdDriverMpi * bd = new BdDriverMpi(new DecTssModel(*getTssModel(env)), env->par_, env->message_, comm); //this line cause segment fault
+	BdDriverMpi * bd = new BdDriverMpi(env->model_, env->par_, env->message_, comm);
 	env->solver_ = bd;
 
 	double * obj_aux  = NULL;
@@ -452,15 +491,14 @@ void solveBdMpi(
 		FREE_ARRAY_PTR(cubd_aux);
 	}
 
-	/** relax second-stage integrality */
-	env->par_->setBoolPtrParam("RELAX_INTEGRALITY", 1, true);
-
 	DSP_RTN_CHECK_THROW(env->solver_->init());
 	DSP_RTN_CHECK_THROW(dynamic_cast<BdDriverMpi*>(env->solver_)->run());
 	DSP_RTN_CHECK_THROW(env->solver_->finalize());
 #else
 	printf("Benders decomposition has been disabled because SCIP was not available.\n");
 #endif
+
+	END_TRY_CATCH(;)
 }
 #endif
 
@@ -567,7 +605,7 @@ int getNumCouplingRows(DspApiEnv * env)
 int getTotalNumRows(DspApiEnv * env)
 {
 	DSP_API_CHECK_MODEL(-1);
-	return getNumRows(env,0)+getNumRows(env,1);
+	return getModelPtr(env)->getFullModelNumRows();
 }
 
 /** get total number of columns */
