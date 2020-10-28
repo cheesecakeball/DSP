@@ -11,26 +11,30 @@
 
 const char* gDspUsage = 
 	"Not enough or invalid arguments, please try again.\n\n"
-	"Usage: --algo <de,bd,dd,dro,dw> --smps <smps file> --mps <mps file> --dec <dec file> [--soln <solution file prefix> --param <param file>]\n\n"
+	"Usage: --algo <de,bd,dd,drbd,drdd,dw> --smps <smps file> --mps <mps file> --dec <dec file> [--soln <solution file prefix> --param <param file> --test <benchmark objective value>]\n\n"
 	"       --algo\tchoice of algorithms.\n"
-	"               de: deterministic equivalent form\n"
-	"               bd: Benders decomposition\n"
-	"               dd: dual decomposition\n"
-	"               dro: distributionally robust\n"
-	"               dw: Dantzig-Wolfe decomposition with branch-and-bound\n"
+	"             \tde: deterministic equivalent form\n"
+	"             \tbd: Benders decomposition\n"
+	"             \tdd: dual decomposition\n"
+	"             \tdrbd: distributionally robust bd\n"
+	"             \tdrdd: distributionally robust dd\n"
+	"             \tdw: Dantzig-Wolfe decomposition with branch-and-bound\n"
 	"       --smps\tSMPS file name without extensions. For example, if your SMPS files are ../test/farmer.cor, ../test/farmer.sto, and ../test/farmer.tim, this value should be ../test/farmer\n"
 	"       --mps\tMPS file name\n"
 	"       --dec\tDEC file name\n"
-	"       --soln\toptional argument for solution file prefix. For exampe, if the prefix is given as MySol, then two files MySol.primal.txt and MySol.dual.txt will be written for primal and dual solutions, respectively.\n"
-	"       --param\toptional paramater for parameter file name\n";
+	"       --soln\toptional argument for solution file prefix. For example, if the prefix is given as MySol, then two files MySol.primal.txt and MySol.dual.txt will be written for primal and dual solutions, respectively.\n"
+	"       --param\toptional paramater for parameter file name\n"
+	"       --test\toptional parameter for testing objective value\n";
 
 void setBlockIds(DspApiEnv* env, int nsubprobs, bool master_has_subblocks);
-void runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* solnfile, char* paramfile);
-void readMpsDec(DspApiEnv* env, char* mpsfile, char* decfile);
-void parseDecFile(char* decfile, vector<vector<string> >& rows_in_blocks);
+int runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* solnfile, char* paramfile, char* testvalue);
+int readMpsDec(DspApiEnv* env, char* mpsfile, char* decfile);
+int parseDecFile(char* decfile, vector<vector<string> >& rows_in_blocks);
 void createBlockModel(DspApiEnv* env, CoinMpsIO& p, const CoinPackedMatrix* mat, 
 	int blockid, vector<string>& rows_in_block, map<string,int>& rowname2index, 
 	const char* ctype, const double* obj);
+
+const double test_tolerance = 1.0e-2;
 
 /*
  This will compile a stand-alone binary file that reads problem instances.
@@ -63,7 +67,8 @@ int main(int argc, char* argv[]) {
 		char* decfile = NULL;
 		char* solnfile = NULL;
 		char* paramfile = NULL;
-		for (int i = 1; i < argc; ++i) {
+		char* testvalue = NULL;
+		for (int i = 1; i < argc; i += 2) {
 			if (i + 1 != argc) {
 				if (string(argv[i]) == "--algo") {
 					algotype = argv[i+1];
@@ -77,11 +82,12 @@ int main(int argc, char* argv[]) {
 					solnfile = argv[i+1];
 				} else if (string(argv[i]) == "--param") {
 					paramfile = argv[i+1];
+				} else if (string(argv[i]) == "--test") {
+					testvalue = argv[i+1];
 				} else {
 					EXIT_WITH_MSG
 				}
 			}
-			i++;
 		}
 
 		// algotype is required.
@@ -95,18 +101,19 @@ int main(int argc, char* argv[]) {
 		}
 
 		// run dsp
-		runDsp(algotype, smpsfile, mpsfile, decfile, solnfile, paramfile);
+		int ret = runDsp(algotype, smpsfile, mpsfile, decfile, solnfile, paramfile, testvalue);
 
 #ifdef DSP_HAS_MPI
 		MPI_Finalize();
 #endif
-		return 0;
+		return ret;
 	}
 #undef EXIT_WITH_MSG
 }
 
-void runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* solnfile, char* paramfile) {
+int runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* solnfile, char* paramfile, char* testvalue) {
 
+	int ret = 0;
 	bool isroot = true;
 	bool issolved = true;
 	bool isstochastic = true;
@@ -123,8 +130,8 @@ void runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* 
 	// Read problem instance from file(s)
 	if (smpsfile != NULL) {
 		if (isroot) cout << "Reading SMPS files: " << smpsfile << endl;
-		int ret = readSmps(env, smpsfile);
-		if (ret != 0) return;
+		ret = readSmps(env, smpsfile);
+		if (ret != 0) return ret;
 		if (isroot) {
 			cout << "First stage: " << getNumRows(env,0) << " rows, " << getNumCols(env,0) << " cols, " << getNumIntegers(env,0) << " integers" << endl;
 			cout << "Second stage: " << getNumRows(env,1) << " rows, " << getNumCols(env,1) << " cols, " << getNumIntegers(env,1) << " integers" << endl;
@@ -136,7 +143,8 @@ void runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* 
 			cout << "Reading MPS file: " << mpsfile << endl;
 			cout << "Reading DEC file: " << decfile << endl;
 		}
-		readMpsDec(env, mpsfile, decfile);
+		ret = readMpsDec(env, mpsfile, decfile);
+		if (ret != 0) return ret;
 		isstochastic = false;
 	}
 
@@ -169,28 +177,57 @@ void runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* 
 			cout << "Dual decomposition is not available for mps/dec files." << endl;
 			issolved = false;
 		}
-	} else if (string(algotype) == "dro") {
+	}
+	else if (string(algotype) == "drbd")
+	{
 		if (isstochastic) {
 			char drofile[128];
 			sprintf(drofile, "%s.dro", smpsfile);
 			if (isroot) cout << "Reading DRO file: " << drofile << endl;
 
 			int ret = readDro(env, drofile);
-			if (ret != 0) return;
+			if (ret != 0) return ret;
 
-			if (isroot) cout << "Run dual decomposition for DRO" << endl;
-			solveDro(env);
+			if (isroot)
+				cout << "Run distributionally robust Benders decomposition" << endl;
+#ifdef DSP_HAS_MPI
+			solveBdMpi(env, MPI_COMM_WORLD);
+#else
+			solveBd(env);
+#endif
+		} else {
+			cout << "Benders decomposition is not available for mps/dec files." << endl;
+			issolved = false;
+		}
+	}
+	else if (string(algotype) == "drdd")
+	{
+		if (isstochastic) {
+			char drofile[128];
+			sprintf(drofile, "%s.dro", smpsfile);
+			if (isroot) cout << "Reading DRO file: " << drofile << endl;
+
+			int ret = readDro(env, drofile);
+			if (ret != 0) return ret;
+
+			if (isroot)
+				cout << "Run distributionally robust dual decomposition" << endl;
+			solveDd(env);
 		} else {
 			cout << "Dual decomposition is not available for mps/dec files." << endl;
 			issolved = false;
 		}
-	} else if (string(algotype) == "dw") {
+	}
+	else if (string(algotype) == "dw")
+	{
 #ifdef DSP_HAS_MPI
 		solveDwMpi(env, MPI_COMM_WORLD);
 #else
 		solveDw(env);
 #endif
-	} else {
+	}
+	else
+	{
 		if (isroot) cout << "Invalid algorithm type, please try again.\n";
 		issolved = false;
 	}
@@ -212,9 +249,37 @@ void runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* 
 			cout << "Dual Bound  : " << dualobj << endl;
 			cout << "Gap (%)     : " << fabs(primobj-dualobj)/(fabs(primobj)+1.e-10)*100 << endl;
 
+			if (testvalue != NULL) {
+				double val = atof(testvalue);
+				cout << "Testing Bound: " << val << endl;
+				// cout << "relgap: " << fabs(val - primobj) / (fabs(val) + 1.e-10) << endl;
+				// cout << "relgap: " << fabs(val - dualobj) / (fabs(val) + 1.e-10) << endl;
+				if (primobj >= dualobj) {
+					if ((val - primobj) / (fabs(val) + 1.e-10) > test_tolerance || (dualobj - val) / (fabs(val) + 1.e-10) > test_tolerance)
+						ret = 1;
+				} else {
+					if ((primobj - val) / (fabs(val) + 1.e-10) > test_tolerance || (val - dualobj) / (fabs(val) + 1.e-10) + test_tolerance)
+						ret = 1;
+				}
+			}
+
 			/** write solutions to files */
 			if (solnfile != NULL) {
+
+				char pobjname[128];
+				sprintf(pobjname, "%s.primobj.txt", solnfile);
+				ofstream pobjstream(pobjname);
+				pobjstream << primobj << endl;
+				pobjstream.close();
+
+				char dobjname[128];
+				sprintf(dobjname, "%s.dualobj.txt", solnfile);
+				ofstream dobjstream(dobjname);
+				dobjstream << dualobj << endl;
+				dobjstream.close();
+
 				if (primobj < 1.0e+20) {
+
 					double *primsol = new double [ncols];
 					getPrimalSolution(env, ncols, primsol);
 
@@ -250,6 +315,8 @@ void runDsp(char* algotype, char* smpsfile, char* mpsfile, char* decfile, char* 
 
 	if (isroot) cout << "Deleting DSP environment\n";
 	freeEnv(env);
+
+	return ret;
 }
 
 void setBlockIds(DspApiEnv* env, int nsubprobs, bool master_has_subblocks) {
@@ -302,14 +369,13 @@ void setBlockIds(DspApiEnv* env, int nsubprobs, bool master_has_subblocks) {
 	setIntPtrParam(env, "ARR_PROC_IDX", (int) proc_idx_set.size(), &proc_idx_set[0]);
 }
 
-void readMpsDec(DspApiEnv* env, char* mpsfile, char* decfile) {
+int readMpsDec(DspApiEnv* env, char* mpsfile, char* decfile) {
+	int ret = 0;
 	// Read .mps file
 	CoinMpsIO p;
 	p.readMps(mpsfile);
 	const CoinPackedMatrix* mps_matrix = p.getMatrixByRow();
 	int ncols = p.getNumCols();
-	const double* clbd = p.getColLower();
-	const double* cubd = p.getColUpper();
 	const double* obj = p.getObjCoefficients();
 	vector<double> zeros(ncols, 0.0);
 	string ctype;
@@ -329,8 +395,8 @@ void readMpsDec(DspApiEnv* env, char* mpsfile, char* decfile) {
 	// For each block, the following vector stores the corresponding rows.
 	//cout << "Parsing .dec file ... ";
 	vector<vector<string> > rows_in_blocks;
-	parseDecFile(decfile, rows_in_blocks);
-	//cout << "done!" << endl;
+	ret = parseDecFile(decfile, rows_in_blocks);
+	if (ret != 0) return ret;
 
 	// Assign block(s) to each process
 	setBlockIds(env, rows_in_blocks.size() - 1, true);
@@ -351,9 +417,11 @@ void readMpsDec(DspApiEnv* env, char* mpsfile, char* decfile) {
 	}
 
 	updateBlocks(env);
+
+	return ret;
 }
 
-void parseDecFile(char* decfile, vector<vector<string> >& rows_in_blocks) {
+int parseDecFile(char* decfile, vector<vector<string> >& rows_in_blocks) {
 	// Cards defined in .dec file
 	enum DecCard {
 		PRESOLVED = 0,
@@ -391,6 +459,9 @@ void parseDecFile(char* decfile, vector<vector<string> >& rows_in_blocks) {
 					rows_in_blocks[0].push_back(line);
 			}
 		}
+	} else {
+		printf("Cannot open file: %s\n", decfile);
+		return 1;
 	}
 #if 0
 	cout << "Number of blocks: " << rows_in_blocks.size() << endl;
@@ -400,6 +471,7 @@ void parseDecFile(char* decfile, vector<vector<string> >& rows_in_blocks) {
 			cout << rows_in_blocks[i][j] << endl;
 	}
 #endif
+	return 0;
 }
 
 void createBlockModel(DspApiEnv* env, CoinMpsIO& p, const CoinPackedMatrix* mat, 

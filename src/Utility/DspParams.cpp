@@ -36,8 +36,6 @@ void DspParams::readParamFile(const char * param_file)
 	ifstream myfile(param_file);
 	if (myfile.is_open())
 	{
-		int pos = 0;
-		int col = 0;
 		string param_element[3];
 		size_t startpos, found;
 		while(getline(myfile, line))
@@ -156,8 +154,6 @@ void DspParams::initIntParams()
 {
 	/** print level */
 	IntParams_.createParam("LOG_LEVEL", 1);
-	IntParams_.createParam("DD/SUB/LOG_LEVEL", 0);
-	IntParams_.createParam("DW/SUB/LOG_LEVEL", 0);
 
 	/** branch-and-cut node limit */
 	IntParams_.createParam("NODE_LIM", MAX_INT_NUM);
@@ -177,13 +173,17 @@ void DspParams::initIntParams()
 	IntParams_.createParam("BD/INIT_LB_ALGO", SEPARATE_LP);
 
     /** iteration limit of the dual decomposition used in Benders for initial lower bounding */
-    IntParams_.createParam("BD/DD/ITER_LIM", 10);
+	IntParams_.createParam("BD/DD/ITER_LIM", 1);
 
-    /** iteration limit */
+	/** iteration limit */
     IntParams_.createParam("DD/ITER_LIM", MAX_INT_NUM);
 
 	/** algorithm for the master */
+#ifdef DSP_HAS_OOQP
 	IntParams_.createParam("DD/MASTER_ALGO", IPM_Feasible);
+#else
+	IntParams_.createParam("DD/MASTER_ALGO", IPM);
+#endif
 
 	/** number of cuts to the master per iteration */
 	IntParams_.createParam("DD/NUM_CUTS_PER_ITER", 1);
@@ -208,11 +208,49 @@ void DspParams::initIntParams()
 	/** minimum number of processes to wait at the master */
 	IntParams_.createParam("DD/MIN_PROCS", 1);
 
-	/** minimum number of processes to wait at the master */
-	IntParams_.createParam("SOLVER/MIP", OsiCpx);
+//#ifdef DSP_HAS_GRB
+//	IntParams_.createParam("DE/SOLVER", OsiGrb);
+	
+//#endif
 
-	/** minimum number of processes to wait at the master */
-	IntParams_.createParam("SOLVER/QP", OsiCpx);
+#ifdef DSP_HAS_CPX
+	IntParams_.createParam("BD/SUB/SOLVER", OsiCpx);
+	IntParams_.createParam("DD/MASTER/SOLVER", OsiCpx);
+	IntParams_.createParam("DD/SUB/SOLVER", OsiCpx);
+	IntParams_.createParam("DE/SOLVER", OsiCpx);
+	IntParams_.createParam("DW/MASTER/SOLVER", OsiCpx);
+	IntParams_.createParam("DW/SUB/SOLVER", OsiCpx);
+#else
+#ifdef DSP_HAS_GRB
+	IntParams_.createParam("BD/SUB/SOLVER", OsiGrb);
+	IntParams_.createParam("DE/SOLVER", OsiGrb);
+	IntParams_.createParam("DD/MASTER/SOLVER", OsiGrb);
+	IntParams_.createParam("DD/SUB/SOLVER", OsiGrb);
+	IntParams_.createParam("DW/MASTER/SOLVER", OsiGrb);
+	IntParams_.createParam("DW/SUB/SOLVER", OsiGrb);
+#else
+	IntParams_.createParam("DW/MASTER/SOLVER", OsiClp);
+	IntParams_.createParam("BD/SUB/SOLVER", OsiClp);
+	IntParams_.createParam("DD/MASTER/SOLVER", OsiClp);
+#ifdef DSP_HAS_SCIP
+	IntParams_.createParam("DD/SUB/SOLVER", OsiScip);
+	IntParams_.createParam("DE/SOLVER", OsiScip);
+	IntParams_.createParam("DW/SUB/SOLVER", OsiScip);
+#endif
+#endif
+#endif
+
+
+	IntParams_.createParam("DE/SOLVER/LOG_LEVEL", 0);
+	IntParams_.createParam("DD/SUB/SOLVER/LOG_LEVEL", 0);
+	IntParams_.createParam("DW/MASTER/SOLVER/LOG_LEVEL", 0);
+	IntParams_.createParam("DW/SUB/SOLVER/LOG_LEVEL", 0);
+
+	/** number of threads used for subproblem solution */
+	IntParams_.createParam("BD/MASTER/THREADS", 1);
+	IntParams_.createParam("BD/SUB/THREADS", 1);
+	IntParams_.createParam("DD/SUB/THREADS", 1);
+	IntParams_.createParam("DW/SUB/THREADS", 1);
 
 	/** display frequency */
 	IntParams_.createParam("SCIP/DISPLAY_FREQ", 100);
@@ -224,8 +262,7 @@ void DspParams::initIntParams()
 	IntParams_.createParam("DW/MASTER/COL_AGE_LIM", 10);
     IntParams_.createParam("DW/ITER_LIM", MAX_INT_NUM);
     IntParams_.createParam("DW/HEURISTICS/TRIVIAL/ITER_LIM", MAX_INT_NUM);
-    IntParams_.createParam("DW/HEURISTICS/DIVE/ITER_LIM", MAX_INT_NUM);
-    IntParams_.createParam("DW/SUB/THREADS", 1);
+	IntParams_.createParam("DW/HEURISTICS/DIVE/ITER_LIM", MAX_INT_NUM);
 	IntParams_.createParam("DW/SUB/ADVIND", 1);
 	IntParams_.createParam("DW/BRANCH", 2);
 	IntParams_.createParam("DW/STRONG_BRANCH/ITER_LIM", 10);
@@ -246,8 +283,8 @@ void DspParams::initDblParams()
 	DblParams_.createParam("DW/TIME_LIM", MAX_DBL_NUM);
 
 	/** options for trust region */
-	DblParams_.createParam("DD/TR/SIZE", 0.1);
-	DblParams_.createParam("DW/TR/SIZE", 0.1);
+	DblParams_.createParam("DD/TR/SIZE", 100.0);
+	DblParams_.createParam("DW/TR/SIZE", 100.0);
 	DblParams_.createParam("DW/MIN_INCREASE", 1.0e-6);
 	DblParams_.createParam("DW/INIT_CENTER", 0.1);
 
@@ -255,16 +292,13 @@ void DspParams::initDblParams()
 	DblParams_.createParam("DD/STOP_TOL", 0.00001);
 
 	/** branch-and-bound gap tolerance */
-	DblParams_.createParam("MIP/GAP_TOL", 0.00001);
-	/** TODO: Is this option duplicate? */
+	DblParams_.createParam("DE/GAPTOL", 1.0e-4);
+	DblParams_.createParam("DD/SUB/GAPTOL", 1.0e-5);
 	DblParams_.createParam("DW/GAPTOL", 1.0e-4);
 	DblParams_.createParam("DW/SUB/GAPTOL", 1.0e-4);
 
 	/** time limit */
-	DblParams_.createParam("MIP/TIME_LIM", 1e+20);
-	/** TODO: Is this option duplicate? */
-	DblParams_.createParam("SCIP/TIME_LIM", 1e+20);
-	/** TODO: Is this option duplicate? */
+	DblParams_.createParam("DD/SUB/TIME_LIM", 1e+20);
 	DblParams_.createParam("DW/SUB/TIME_LIM", 1e+20);
 
 	/** LB-UB worker ratio */

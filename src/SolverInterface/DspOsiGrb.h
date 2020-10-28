@@ -61,7 +61,10 @@ public:
 		try{
 			// need to delete previous coefficient first, otherwise, the value in mat is added to current model
 			GUROBI_CALL("loadQuadraticObjective", GRBdelq(grb_->getLpPtr(OsiGrbSolverInterface::KEEPCACHED_ALL)));
+<<<<<<< HEAD
 			
+=======
+>>>>>>> upstream/master
 			if (mat.isColOrdered()) {
 				for (int j = 0; j < mat.getMajorDim(); ++j) {
 					for (int k = 0; k < mat.getVectorSize(j); ++k) {
@@ -69,6 +72,7 @@ public:
 						double v = mat.getElements()[mat.getVectorStarts()[j] + k];
 						int row[1]={i};
 						int col[1]={j};
+<<<<<<< HEAD
 						double element[1];
 						// if (i!=j){
 						// 	element[0]=2*v;
@@ -76,6 +80,9 @@ public:
 						// else{
 							element[0]=v;
 						//}
+=======
+						double element[1]={0.5*v};
+>>>>>>> upstream/master
                     	GUROBI_CALL("loadQuadraticObjective", GRBupdatemodel(grb_->getLpPtr(OsiGrbSolverInterface::KEEPCACHED_ALL)));
                     	GUROBI_CALL("loadQuadraticObjective", GRBaddqpterms(grb_->getLpPtr(OsiGrbSolverInterface::KEEPCACHED_ALL),
                     	1, row, col, element));
@@ -89,6 +96,7 @@ public:
 						double v = mat.getElements()[mat.getVectorStarts()[i] + k];
 						int row[1]={i};
 						int col[1]={j};
+<<<<<<< HEAD
 						double element[1];
 						// if (i!=j){
 						// 	element[0]=2*v;
@@ -97,6 +105,9 @@ public:
 							element[0]=v;
 						//}
 						
+=======
+						double element[1]={0.5*v};
+>>>>>>> upstream/master
 						GUROBI_CALL("loadQuadraticObjective", GRBupdatemodel(grb_->getLpPtr(OsiGrbSolverInterface::KEEPCACHED_ALL)));
                     	GUROBI_CALL("loadQuadraticObjective", GRBaddqpterms(grb_->getLpPtr(OsiGrbSolverInterface::KEEPCACHED_ALL),
                     	1, row, col, element));	
@@ -123,6 +134,7 @@ public:
         	e.print();
 		}
     }
+<<<<<<< HEAD
 
 	virtual void writeMps(const char *filename){
 		try{
@@ -150,6 +162,9 @@ public:
 		loadQuadraticObjective(qobj);
 	}
 	*/
+=======
+	
+>>>>>>> upstream/master
 	virtual void use_simplex() {
 		try{
 			GUROBI_CALL("use simplex", GRBsetintparam(grb_->getEnvironmentPtr(), GRB_INT_PAR_METHOD, 1));
@@ -245,7 +260,11 @@ public:
 		try{
 			double node;
         	GUROBI_CALL("getNumNodes", GRBupdatemodel(grb_->getLpPtr(OsiGrbSolverInterface::KEEPCACHED_ALL)));
+<<<<<<< HEAD
        		GUROBI_CALL("getNumNodes", GRBgetdblattr(grb_->getLpPtr(OsiGrbSolverInterface::KEEPCACHED_ALL), GRB_DBL_ATTR_NODECOUNT, &node));       	
+=======
+        	GUROBI_CALL("getNumNodes", GRBgetdblattr(grb_->getLpPtr(OsiGrbSolverInterface::KEEPCACHED_ALL), GRB_DBL_ATTR_NODECOUNT, &node));
+>>>>>>> upstream/master
         	return (int)node;
 		}
 		catch(const CoinError& e){

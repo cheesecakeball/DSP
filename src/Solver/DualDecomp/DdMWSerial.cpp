@@ -44,25 +44,26 @@ DSP_RTN_CODE DdMWSerial::init() {
 	case IPM_Feasible:
 		master_ = new DdMasterTr(model_, par_, message_);
 		break;
-// #ifdef DSP_HAS_OOQP
-// 	case DSBM:
-// 		master_ = new DdMasterDsb(model_, par_, message_);
-// 		break;
-// #endif
+	case DSBM:
+		// master_ = new DdMasterDsb(model_, par_, message_);
+		char msg[128];
+		sprintf(msg, "DD/MASTER_ALGO = %d is not currently supported.", DSBM);
+		throw CoinError(msg, "init", "DdMWSerial");
+		break;
 	case Subgradient:
 		master_ = new DdMasterSubgrad(model_, par_, message_);
 		break;
 	}
 	DSPdebugMessage("Created master\n");
 	/** initialize master */
-	master_->init();
+	DSP_RTN_CHECK_THROW(master_->init());
 	DSPdebugMessage("Initialized master\n");
 
 	/** create LB worker */
 	worker_.push_back(new DdWorkerLB(model_, par_, message_));
 	/** create CG worker */
 #ifdef DSP_HAS_SCIP
-	if (par_->getIntParam("SOLVER/MIP") == OsiScip && (parFeasCuts_ >= 0 || parOptCuts_ >= 0))
+	if (par_->getIntParam("DW/SUB/SOLVER") == OsiScip && (parFeasCuts_ >= 0 || parOptCuts_ >= 0))
 		worker_.push_back(new DdWorkerCGBd(model_, par_, message_));
 	else {
 		message_->print(0, "No Benders cut is generated.\n");
@@ -153,7 +154,6 @@ DSP_RTN_CODE DdMWSerial::run() {
 	Solutions coupling_solutions; /**< coupling solutions */
 
 	/** Benders cuts */
-	int ncuts = 0;
 	OsiCuts cuts, emptycuts;
 	int cg_status = DSP_STAT_MW_CONTINUE;
 
@@ -196,15 +196,9 @@ DSP_RTN_CODE DdMWSerial::run() {
 	lambdas = new double * [model_->getNumSubproblems()];
 
 	nsubsolution = new int [model_->getNumSubproblems()];
-	if (model_->isDro()) {
-		for (int s = 0; s < model_->getNumSubproblems(); ++s) {
-			nsubsolution[s] = workerlb->subprobs_[s]->getNumCols();
-			DSPdebugMessage("nsubsolution[%d] = %d\n", s, nsubsolution[s]);
-		}
-	} else {
-		for (int s = 0; s < model_->getNumSubproblems(); ++s) {
-			nsubsolution[s] = workerlb->subprobs_[s]->ncols_coupling_;
-		}
+	for (int s = 0; s < model_->getNumSubproblems(); ++s) {
+		nsubsolution[s] = workerlb->subprobs_[s]->getNumCols();
+		DSPdebugMessage("nsubsolution[%d] = %d\n", s, nsubsolution[s]);
 	}
 
 	printHeaderInfo();
@@ -419,7 +413,7 @@ DSP_RTN_CODE DdMWSerial::run() {
 			}
 		
 		/** evaluate UB to get primal solution for each scenario */
-		double ub = workerub->evaluate(model_->getNumCouplingCols(), &master_->bestprimsol_[0]);
+		workerub->evaluate(model_->getNumCouplingCols(), &master_->bestprimsol_[0]);
 		for (int s = 0; s < tss->getNumScenarios(); ++s) {
 			CoinCopyN(workerub->primsols_[s].data(), tss->getNumCols(1), 
 				&master_->bestprimsol_[tss->getNumCols(0) + s * tss->getNumCols(1)]);

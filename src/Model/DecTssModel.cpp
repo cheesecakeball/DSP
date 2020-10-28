@@ -57,7 +57,6 @@ DSP_RTN_CODE DecTssModel::decompose(
 	int nrows = nrows_[0] + size * nrows_[1];
 	int ncols = ncols_[0] + size * ncols_[1] + naux;
 	DSPdebugMessage("nrows %d ncols %d\n", nrows, ncols);
-	DSPdebugMessage("ncols_[0] = %d, ncols_[1] = %d\n", ncols_[0], ncols_[1]);
 
 	BGN_TRY_CATCH
 
@@ -419,7 +418,6 @@ DSP_RTN_CODE DecTssModel::decompose(
 	nzcnt = rowIndices.size();
 	DSPdebugMessage("rownum %d nzcnt %d pos %d\n", rownum, nzcnt, pos);
 	assert(nzcnt == pos);
-	
 	mat = new CoinPackedMatrix(false, &rowIndices[0], &colIndices[0], &elements[0], nzcnt);
 	mat->setDimensions(nrows, ncols);
 	DSPdebug(mat->verifyMtx(4));

@@ -177,8 +177,11 @@ public:
 			int offset,   /**< offset by which indices are shifted */
 			int start = 0 /**< index only after which indices are shifted */);
 
+<<<<<<< HEAD
 	virtual bool isQCQP() {return isQCQP_;}
 
+=======
+>>>>>>> upstream/master
 	// The following functions are for distributionally robust variant.
 	// TODO: Better to create a new inhereted class?
 	virtual void setDro(bool yes) { isdro_ = yes; }

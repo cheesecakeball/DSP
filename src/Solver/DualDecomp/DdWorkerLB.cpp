@@ -60,7 +60,7 @@ DSP_RTN_CODE DdWorkerLB::solve() {
 
 		/** reset gap tolerance */
 		if (subprobs_[s]->getSiPtr()->getNumIntegers() > 0)
-			subprobs_[s]->setGapTol(par_->getDblParam("MIP/GAP_TOL"));
+			subprobs_[s]->setGapTol(par_->getDblParam("DD/SUB/GAPTOL"));
 
 		bool resolve = true;
 		while (resolve) {
@@ -68,7 +68,7 @@ DSP_RTN_CODE DdWorkerLB::solve() {
 
 			/** set time limit */
 			subprobs_[s]->setTimeLimit(
-					CoinMin(CoinMax(0.01, time_remains_), par_->getDblParam("MIP/TIME_LIM")));
+					CoinMin(CoinMax(0.01, time_remains_), par_->getDblParam("DD/SUB/TIME_LIM")));
 			/** solve */
 			subprobs_[s]->solve();
 
@@ -118,8 +118,8 @@ DSP_RTN_CODE DdWorkerLB::solve() {
 		if (subprobs_[s]->getStatus() == DSP_STAT_LIM_INFEAS)
 			primobj = COIN_DBL_MAX;
 		else if (primobj < COIN_DBL_MAX)
-			primobj += subprobs_[s]->getSiPtr()->getObjValue();
-		dualobj += subprobs_[s]->getSiPtr()->getBestDualBound();
+			primobj += subprobs_[s]->getDspOsiPtr()->getPrimObjValue();
+		dualobj += subprobs_[s]->getDspOsiPtr()->getDualObjValue();
 		total_cputime += CoinCpuTime() - cputime;
 		total_walltime += CoinGetTimeOfDay() - walltime;
 

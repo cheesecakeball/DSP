@@ -9,7 +9,7 @@
 
 #include "Model/TssModel.h"
 #include "Solver/Benders/BdMaster.h"
-#include "SolverInterface/DspOsi.h"
+#include "SolverInterface/DspOsiScip.h"
 #ifdef DSP_HAS_MPI
 #include "Solver/Benders/SCIPconshdlrBendersWorker.h"
 #endif /* DSP_HAS_MPI */
@@ -23,7 +23,8 @@ worker_(NULL),
 naux_(1),
 obj_aux_(NULL),
 clbd_aux_(NULL),
-cubd_aux_(NULL) {
+cubd_aux_(NULL),
+is_binary_(false) {
 	obj_aux_ = new double[naux_];
 	clbd_aux_ = new double[naux_];
 	cubd_aux_ = new double[naux_];
@@ -35,7 +36,8 @@ cubd_aux_(NULL) {
 
 BdMaster::BdMaster(const BdMaster& rhs) :
 DecSolver(rhs),
-naux_(rhs.naux_) {
+naux_(rhs.naux_),
+is_binary_(rhs.is_binary_) {
 	obj_aux_ = new double[naux_];
 	clbd_aux_ = new double[naux_];
 	cubd_aux_ = new double[naux_];
@@ -59,10 +61,13 @@ DSP_RTN_CODE BdMaster::init() {
 	createProblem();
 
 	/** set node limit */
-	si_->setNodeLimit(par_->getIntParam("NODE_LIM"));
+	osi_->setNodeLimit(par_->getIntParam("NODE_LIM"));
 
 	/** set print level */
-	si_->messageHandler()->setLogLevel(CoinMin(par_->getIntParam("LOG_LEVEL") + 2, 5));
+	osi_->setLogLevel(CoinMin(par_->getIntParam("LOG_LEVEL") + 2, 5));
+
+	/** use single core */
+	osi_->setNumCores(par_->getIntParam("BD/MASTER/THREADS"));
 
 	END_TRY_CATCH_RTN(;,DSP_RTN_ERR)
 
@@ -76,14 +81,14 @@ DSP_RTN_CODE BdMaster::solve() {
 	DSPdebugMessage("Start solving...\n");
 
 	/** set time limit */
-	si_->setTimeLimit(CoinMax(0.01, CoinMin(1.0e+20,time_remains_)));
+	osi_->setTimeLimit(CoinMax(0.01, CoinMin(1.0e+20,time_remains_)));
 	tic_ = CoinGetTimeOfDay();
 
 	/** solve */
-	si_->initialSolve();
+	osi_->solve();
 
 	/** solver status */
-	convertOsiToDspStatus(si_, status_);
+	status_ = osi_->status();
 	DSPdebugMessage("Benders status %d\n", status_);
 	switch(status_)
 	{
@@ -94,12 +99,12 @@ DSP_RTN_CODE BdMaster::solve() {
 	case DSP_STAT_STOPPED_TIME:
 	{
 		/** get solution */
-		if (si_->getColSolution() != NULL)
-			CoinCopyN(si_->getColSolution(), si_->getNumCols(), &primsol_[0]);
+		if (getSiPtr()->getColSolution() != NULL)
+			CoinCopyN(getSiPtr()->getColSolution(), getSiPtr()->getNumCols(), &primsol_[0]);
 		/** primal objective value */
-		primobj_ = si_->getObjValue();
+		primobj_ = osi_->getPrimObjValue();
 		/** dual objective value */
-		dualobj_ = si_->getBestDualBound();
+		dualobj_ = osi_->getDualObjValue();
 		break;
 	}
 	default:
@@ -116,13 +121,12 @@ DSP_RTN_CODE BdMaster::setSolutions(Solutions initsols)
 {
 	BGN_TRY_CATCH
 
-	if (si_->getNumIntegers() > 0)
+	if (getSiPtr()->getNumIntegers() > 0)
 	{
-		OsiScipSolverInterface * SiScip = dynamic_cast<OsiScipSolverInterface*>(si_);
 		for (unsigned i = 0; i < initsols.size(); ++i)
 		{
-			double * solution = initsols[i]->denseVector(SiScip->getNumCols());
-			SiScip->setColSolution(solution);
+			double * solution = initsols[i]->denseVector(getSiPtr()->getNumCols());
+			getSiPtr()->setColSolution(solution);
 			FREE_ARRAY_PTR(solution);
 		}
 	}
@@ -137,17 +141,17 @@ DSP_RTN_CODE BdMaster::setConshdlr(SCIPconshdlrBenders* conshdlr)
 	BGN_TRY_CATCH
 
 	/** retrieve solver interface for SCIP */
-	OsiScipSolverInterface * scip = dynamic_cast<OsiScipSolverInterface*>(si_);
+	OsiScipSolverInterface * scip = dynamic_cast<DspOsiScip*>(osi_)->scip_;
 
 	/** include constraint handler */
-	SCIP_CALL_ABORT(SCIPincludeObjConshdlr(scip->getScip(), conshdlr, false));
+	DSPdebugMessage("Added constraint handler %p\n", conshdlr);
+	SCIP_CALL_ABORT(SCIPincludeObjConshdlr(scip->getScip(), conshdlr, TRUE));
 
 	/** create constraint */
 	SCIP_CONS * cons = NULL;
 	SCIP_CALL_ABORT(SCIPcreateConsBenders(scip->getScip(), &cons, "Benders"));
 	SCIP_CALL_ABORT(SCIPaddCons(scip->getScip(), cons));
 	SCIP_CALL_ABORT(SCIPreleaseCons(scip->getScip(), &cons));
-	DSPdebugMessage("Added constraint handler %p\n", conshdlr);
 
 	END_TRY_CATCH_RTN(;,DSP_RTN_ERR)
 
@@ -196,6 +200,7 @@ DSP_RTN_CODE BdMaster::createProblem() {
 	DSPdebugMessage("Decomposed the model.\n");
 
 	/** convert column types */
+	is_binary_ = true;
 	if (model_->isStochastic())
 	{
 		TssModel * tssModel;
@@ -207,6 +212,18 @@ DSP_RTN_CODE BdMaster::createProblem() {
 		{
 			printf("Model claims to be stochastic when it is not");
 			return DSP_RTN_ERR;
+		}
+
+		/** is binary program? */
+		for (int j = 0; j < tssModel->getNumCols(0); ++j) {
+			if (ctype[j] == 'C') { 
+				is_binary_ = false;
+				break;
+			}
+			if (ctype[j] == 'I' && (clbd[j] != 0.0 || cubd[j] != 1.0)) {
+				is_binary_ = false;
+				break;
+			}
 		}
 
 		/** relax integrality? */
@@ -223,10 +240,28 @@ DSP_RTN_CODE BdMaster::createProblem() {
 	}
 	else
 	{
+		/** is binary program? */
+		for (int j = 0; j < mat->getNumCols(); ++j) {
+			if (ctype[j] == 'C') { 
+				is_binary_ = false;
+				break;
+			}
+			if (ctype[j] == 'I' && (clbd[j] != 0.0 || cubd[j] != 1.0)) {
+				is_binary_ = false;
+				break;
+			}
+		}
+
 		if (par_->getBoolPtrParam("RELAX_INTEGRALITY")[0])
 		{
 			for (int j = 0; j < mat->getNumCols(); j++)
 			{
+				if (is_binary_) {
+					if (ctype[j] == 'C') 
+						is_binary_ = false;
+					if (ctype[j] == 'I' && (clbd[j] != 0.0 || cubd[j] != 1.0)) 
+						is_binary_ = false;
+				}
 				if (ctype[j] != 'C')
 					nIntegers--;
 				ctype[j] = 'C';
@@ -234,30 +269,23 @@ DSP_RTN_CODE BdMaster::createProblem() {
 		}
 	}
 
-//	if (nIntegers > 0)
-//	{
-		assert(si_==NULL);
-		si_ = new OsiScipSolverInterface();
-		si_->messageHandler()->setLogLevel(CoinMin(par_->getIntParam("LOG_LEVEL"), 5));
-		DSPdebugMessage("Successfully created SCIP interface \n");
-//	}
-//	else
-//	{
-//		si_ = new SolverInterfaceClp(par_);
-//		si_->setPrintLevel(CoinMax(par_->getIntParam("LOG_LEVEL") - 1, 0));
-//		DSPdebugMessage("Successfully created Soplex interface \n");
-//	}
+	assert(osi_==NULL);
+	osi_ = new DspOsiScip();
+	if (!osi_) throw CoinError("Failed to create DspOsiScip", "createProblem", "DdMaster");
+	
+	osi_->setLogLevel(CoinMin(par_->getIntParam("LOG_LEVEL"), 5));
+	osi_->setNodeInfoFreq(par_->getIntParam("SCIP/DISPLAY_FREQ"));
 
 	/** load problem data */
-	si_->loadProblem(*mat, clbd, cubd, obj, rlbd, rubd);
+	getSiPtr()->loadProblem(*mat, clbd, cubd, obj, rlbd, rubd);
 	for (int j = 0; j < mat->getNumCols(); ++j) {
 		if (ctype[j] != 'C')
-			si_->setInteger(j);
+			getSiPtr()->setInteger(j);
 	}
 	DSPdebugMessage("Successfully load the problem.\n");
 
 	/** allocate memory for primal solution */
-	primsol_.resize(si_->getNumCols());
+	primsol_.resize(getSiPtr()->getNumCols());
 
 	END_TRY_CATCH_RTN(FREE_MEMORY,DSP_RTN_ERR)
 
@@ -281,7 +309,7 @@ DSP_RTN_CODE BdMaster::setObjectiveBounds(double upper, double lower) {
 	BGN_TRY_CATCH
 
 	/** number of columns */
-	int ncols = si_->getNumCols();
+	int ncols = getSiPtr()->getNumCols();
 
 	/** allocate memory */
 	auxind = new int [ncols];
@@ -293,9 +321,9 @@ DSP_RTN_CODE BdMaster::setObjectiveBounds(double upper, double lower) {
 
 	for (int j = 0; j < ncols; ++j) {
 		auxind[j] = j;
-		auxcoef[j] = si_->getObjCoefficients()[j];
+		auxcoef[j] = getSiPtr()->getObjCoefficients()[j];
 	}
-	si_->addRow(ncols, auxind, auxcoef, dualobj_, primobj_);
+	getSiPtr()->addRow(ncols, auxind, auxcoef, dualobj_, primobj_);
 
 	END_TRY_CATCH_RTN(FREE_MEMORY,DSP_RTN_ERR)
 

@@ -8,7 +8,7 @@
 //#define DSP_DEBUG
 
 #include "Solver/DualDecomp/DdMasterAtr.h"
-#include "SolverInterface/DspOsi.h"
+#include "SolverInterface/DspOsiOoqpEps.h"
 
 DdMasterAtr::DdMasterAtr(
 		DecModel *   model,   /**< model pointer */
@@ -155,13 +155,13 @@ DSP_RTN_CODE DdMasterAtr::updateProblem(
 		nlastcuts_[worker_[i]] = cuts.sizeCuts();
 	}
 	message_->print(5, "-> master has %d rows, %d columns, and %d cuts to add\n",
-			si_->getNumRows(), si_->getNumCols(), cuts.sizeCuts());
+			getSiPtr()->getNumRows(), getSiPtr()->getNumCols(), cuts.sizeCuts());
 
 	/** add cut */
 	if (cuts.sizeCuts() > 0)
 	{
 		//cuts.printCuts();
-		si_->addCuts(cuts);
+		getSiPtr()->addCuts(cuts);
 	}
 	else
 	{
@@ -188,7 +188,7 @@ DSP_RTN_CODE DdMasterAtr::updateProblem(
 
 	/** retrieve master primal solution */
 	int nCutsAdded = 0;
-	double curprimobj = 0.0;//si_->getPrimalBound(); /** current primal objective value */
+	double curprimobj = 0.0;//getSiPtr()->getPrimalBound(); /** current primal objective value */
 	for (int s = 0; s < nthetas_; ++s)
 		curprimobj += primsol[s];
 
@@ -267,15 +267,15 @@ DSP_RTN_CODE DdMasterAtr::updateProblem(
 	}
 
 #ifdef DSP_HAS_OOQP
-	OoqpEps * ooqp = dynamic_cast<OoqpEps*>(si_);
+	DspOsiOoqpEps * ooqp = dynamic_cast<DspOsiOoqpEps*>(osi_);
 	if (ooqp)
 	{
-		if (ooqp->hasOoqpStatus_ && isSolved_)
+		if (ooqp->ooqp_->hasOoqpStatus_ && isSolved_)
 		{
 			DSPdebugMessage("bestprimobj %+e bestdualobj %+e\n", bestprimobj_, bestdualobj_);
-			double epsilon = (si_->getObjValue() - newdual + ooqp->getDualityGap()) / (1. + fabs(si_->getObjValue()));
+			double epsilon = (getSiPtr()->getObjValue() - newdual + ooqp->ooqp_->getDualityGap()) / (1. + fabs(getSiPtr()->getObjValue()));
 			if (epsilon > 1.) epsilon = 1.;
-			ooqp->setOoqpStatus(epsilon, -bestprimobj_, -bestdualobj_);
+			ooqp->ooqp_->setOoqpStatus(epsilon, -bestprimobj_, -bestdualobj_);
 		}
 	}
 #endif
@@ -321,6 +321,8 @@ DSP_RTN_CODE DdMasterAtr::updateTrustRegion(const double * primsol)
 
 DSP_RTN_CODE DdMasterAtr::terminationTest()
 {
+	int signal = status_;
+
 	BGN_TRY_CATCH
 
 #if 0
@@ -337,15 +339,16 @@ DSP_RTN_CODE DdMasterAtr::terminationTest()
 
 	double absgap = primobj_ - bestdualobj_;
 	double relgap = fabs(absgap) / (1.e-10 + fabs(primobj_));
-	if (relgap <= par_->getDblParam("DD/STOP_TOL") + par_->getDblParam("MIP/GAP_TOL")) {
-		status_ = DSP_STAT_MW_STOP;
+	if (relgap <= par_->getDblParam("DD/STOP_TOL") + par_->getDblParam("DD/SUB/GAPTOL"))
+	{
+		signal = DSP_STAT_MW_STOP;
+		status_ = DSP_STAT_OPTIMAL;
 		message_->print(0, "TR  STOP with gap tolerance %+e (%.2f%%).\n", absgap, relgap*100);
 	}
 
-
 	END_TRY_CATCH_RTN(;,DSP_RTN_ERR)
 
-	return status_;
+	return signal;
 }
 
 int DdMasterAtr::addCuts(bool possiblyDel)
@@ -437,7 +440,7 @@ int DdMasterAtr::addCuts(bool possiblyDel)
 		nlastcuts_[worker_[i]-1] = cuts.sizeCuts();
 	}
 	message_->print(5, "-> master has %d rows, %d columns, and %d cuts to add\n",
-			si_->getNumRows(), si_->getNumCols(), cuts.sizeCuts());
+			getSiPtr()->getNumRows(), getSiPtr()->getNumCols(), cuts.sizeCuts());
 
 	/** calculate linearization error */
 	linerr_ -= bestdualobj_;
@@ -448,7 +451,7 @@ int DdMasterAtr::addCuts(bool possiblyDel)
 	if (nCutsAdded > 0)
 	{
 		//cuts.printCuts();
-		si_->applyCuts(cuts);
+		getSiPtr()->applyCuts(cuts);
 		is_updated_ = true;
 		CoinFillN(proved_optimality_, nworkers_, false);
 	}
@@ -486,7 +489,7 @@ DSP_RTN_CODE DdMasterAtr::setPrimsolToWorker(
 {
 	BGN_TRY_CATCH
 
-	CoinCopyN(primsol, si_->getNumCols(), primsol_to_worker_[worker_id]);
+	CoinCopyN(primsol, getSiPtr()->getNumCols(), primsol_to_worker_[worker_id]);
 
 	END_TRY_CATCH_RTN(;,DSP_RTN_ERR)
 
